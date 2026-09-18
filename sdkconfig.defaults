@@ -1,0 +1,18 @@
+# AirCom default sdkconfig
+CONFIG_IDF_TARGET="esp32s3"
+
+# 4MB flash, custom partition table (3MB app)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# WebSocket support in esp_http_server (must be enabled)
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# socket budget: httpd (8) + wifi + margin
+CONFIG_LWIP_MAX_SOCKETS=12
+
+# WS handshake header space
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

@@ -1,0 +1,14 @@
+# ESP-IDF build output
+build/
+sdkconfig.old
+*.bin
+*.elf
+*.map
+
+# Generated per-developer config (keep sdkconfig.defaults instead)
+sdkconfig
+
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+*.swp
