@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>AirCom · 无线串口终端</title>
+<style>
+:root {
+  --fg: #2ee66a;
+  --bg: #0a0e0a;
+  --bar: #101710;
+  --line: #1e2a1e;
+  --dim: #7a8f7a;
+  --accent: #35d97a;
+  --warn: #e5c545;
+  --err: #e55555;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; flex-direction: column;
+  background: var(--bg); color: var(--fg);
+  font: 14px/1.4 "Cascadia Mono", Consolas, "JetBrains Mono", Menlo, monospace;
+}
+#bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; background: var(--bar);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto; flex-wrap: wrap; user-select: none;
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #555; display: inline-block; margin-right: 4px; }
+.dot.on  { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.dot.off { background: var(--err); }
+.dot.wait{ background: var(--warn); }
+.sep { color: #2a3a2a; }
+#bar .info { white-space: nowrap; font-size: 13px; }
+#bar .dim { color: var(--dim); }
+.spacer { flex: 1; }
+button {
+  background: #14201a; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.on { background: #16351f; border-color: var(--accent); }
+button.danger { color: var(--err); border-color: #552222; }
+button.danger:hover { border-color: var(--err); }
+
+#termWrap { flex: 1 1 auto; overflow: hidden; position: relative; }
+#term {
+  position: absolute; inset: 0; overflow-y: auto; overflow-x: auto;
+  padding: 6px 10px; cursor: text;
+  -webkit-overflow-scrolling: touch;
+}
+#term .ln { min-height: 1.35em; white-space: pre; }
+#term .ln:empty::after { content: " "; }
+#lineBar {
+  display: none; flex: 0 0 auto; gap: 8px; padding: 6px 10px;
+  background: var(--bar); border-top: 1px solid var(--line);
+}
+#lineBar.show { display: flex; }
+#lineInput {
+  flex: 1; background: #0c130c; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 6px 10px; font: inherit;
+}
+#lineInput:focus { outline: none; border-color: var(--accent); }
+#frozen {
+  display: none; padding: 4px 12px; background: #332b10; color: var(--warn);
+  border-bottom: 1px solid var(--line); font-size: 13px; flex: 0 0 auto;
+  align-items: center; gap: 10px;
+}
+#frozen.show { display: flex; }
+#kbd {
+  position: fixed; left: -9999px; top: 0; width: 10px; height: 10px;
+  opacity: 0;
+}
+/* settings dialog */
+dialog {
+  background: var(--bar); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 0; min-width: min(480px, 94vw); max-height: 90vh;
+  color-scheme: dark;
+}
+dialog::backdrop { background: rgba(0,0,0,.6); }
+.dlg-body { padding: 14px 18px; overflow-y: auto; max-height: 78vh; }
+.dlg-title { font-size: 16px; margin: 0 0 12px; color: #fff; }
+.dlg-sec { margin-bottom: 20px; }
+.dlg-sec h3 {
+  font-size: 13px; color: var(--dim); font-weight: normal;
+  border-bottom: 1px solid var(--line); padding-bottom: 4px; margin: 0 0 10px;
+}
+.frow { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.frow label { min-width: 88px; color: #b8ccb8; font-size: 13px; }
+.frow input[type=text], .frow input[type=password], .frow select {
+  background: #0c130c; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 5px 8px; font: inherit; font-size: 13px; min-width: 0; flex: 1;
+}
+.frow input:focus, .frow select:focus { outline: none; border-color: var(--accent); }
+.hint { color: var(--dim); font-size: 12px; margin: 6px 0; }
+#scanList { max-height: 180px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; margin-top: 6px; }
+#scanList .ap {
+  display: flex; gap: 10px; padding: 4px 8px; cursor: pointer; font-size: 13px;
+  border-bottom: 1px solid #142014;
+}
+#scanList .ap:hover { background: #14201a; }
+#scanList .rssi { color: var(--dim); min-width: 44px; text-align: right; }
+#scanList .lock { color: var(--dim); }
+.dlg-foot { display: flex; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--line); justify-content: flex-end; }
+#toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  background: #16351f; border: 1px solid var(--accent); color: #d6ffe6;
+  padding: 8px 18px; border-radius: 6px; font-size: 13px;
+  opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 99;
+}
+#toast.err { background: #3a1616; border-color: var(--err); color: #ffd6d6; }
+#toast.show { opacity: 1; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #223022; border-radius: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <span><span id="wsDot" class="dot wait"></span><span id="wsTxt">连接中</span></span>
+  <span class="sep">|</span>
+  <span class="info" id="ipInfo">--</span>
+  <span class="sep">|</span>
+  <span class="info" id="uartInfo">--</span>
+  <span class="sep">|</span>
+  <span class="info" id="cliInfo" title="WS 客户端 / 空闲内存">--</span>
+  <span class="spacer"></span>
+  <button id="btnScroll" class="on" title="输出时自动滚动到底部">自动滚动</button>
+  <button id="btnInputMode" title="切换输入模式">行输入</button>
+  <button id="btnClear" title="清空终端屏幕">清屏</button>
+  <button id="btnCfg" title="串口与网络设置">⚙ 设置</button>
+</div>
+
+<div id="frozen">设备失联，正在重连… <span id="frozenRetry"></span>
+  <button onclick="location.reload()">重新加载</button>
+</div>
+
+<div id="termWrap"><div id="term"></div></div>
+
+<div id="lineBar">
+  <input id="lineInput" placeholder="输入内容，回车发送…" autocomplete="off" spellcheck="false">
+  <button id="btnSendLine">发送</button>
+</div>
+<textarea id="kbd" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+
+<dialog id="cfgDlg">
+  <div class="dlg-body">
+    <h2 class="dlg-title">AirCom 设置</h2>
+
+    <div class="dlg-sec">
+      <h3>串口 (UART1 · GPIO17/18)</h3>
+      <div class="frow"><label>波特率</label>
+        <select id="sBaud">
+          <option>9600</option><option>19200</option><option>38400</option>
+          <option>57600</option><option selected>115200</option><option>230400</option>
+          <option>460800</option><option>921600</option>
+          <option value="custom">自定义…</option>
+        </select>
+        <input type="text" id="sBaudCustom" placeholder="自定义" style="display:none;max-width:110px">
+      </div>
+      <div class="frow"><label>数据位</label>
+        <select id="sBits"><option>5</option><option>6</option><option>7</option><option selected>8</option></select>
+      </div>
+      <div class="frow"><label>校验位</label>
+        <select id="sParity"><option value="0" selected>无 None</option><option value="1">奇 Odd</option><option value="2">偶 Even</option></select>
+      </div>
+      <div class="frow"><label>停止位</label>
+        <select id="sStop"><option value="1" selected>1</option><option value="1.5">1.5</option><option value="2">2</option></select>
+      </div>
+      <div class="frow"><label>输入模式</label>
+        <select id="sImode">
+          <option value="line" selected>行输入 — 回车后发送整行</option>
+          <option value="char">字符输入 — 每个按键立即发送</option>
+        </select>
+      </div>
+      <div class="frow"><label>回车发送</label>
+        <select id="sNL">
+          <option value="cr" selected>CR (\r)</option>
+          <option value="crlf">CR+LF (\r\n)</option>
+          <option value="lf">LF (\n)</option>
+        </select>
+      </div>
+      <div class="frow"><label>退格键</label>
+        <select id="sBS">
+          <option value="08" selected>0x08 BS</option>
+          <option value="7f">0x7F DEL</option>
+        </select>
+      </div>
+      <div class="frow"><label>本地回显</label>
+        <select id="sEcho"><option value="0" selected>关闭</option><option value="1">开启</option></select>
+      </div>
+      <div class="frow"><button id="btnApplyUart">应用串口设置</button>
+        <span class="hint" style="flex-basis:100%">立即生效并保存到设备（掉电不丢失）</span></div>
+    </div>
+
+    <div class="dlg-sec">
+      <h3>无线网络 (WiFi)</h3>
+      <div class="frow"><label>工作模式</label>
+        <select id="sMode">
+          <option value="0" selected>热点 (AP) — 手机/电脑直连</option>
+          <option value="1">路由器 (STA) — 加入现有网络</option>
+          <option value="2">双模式 (AP+STA)</option>
+        </select>
+        <button id="btnScan" style="margin-left:auto">扫描网络</button>
+      </div>
+      <div id="scanList" style="display:none"></div>
+      <div class="frow"><label>路由器 SSID</label><input type="text" id="sStaSsid" placeholder="要加入的网络名称"></div>
+      <div class="frow"><label>路由器密码</label><input type="password" id="sStaPass" placeholder="留空 = 开放网络"></div>
+      <div class="frow"><label>热点 SSID</label><input type="text" id="sApSsid"></div>
+      <div class="frow"><label>热点密码</label><input type="password" id="sApPass" placeholder="至少 8 位，留空 = 开放热点"></div>
+      <div class="frow">
+        <button id="btnApplyWifi">保存并切换 WiFi</button>
+        <button id="btnReboot" class="danger" style="margin-left:auto">重启设备</button>
+      </div>
+      <div class="hint">切换 WiFi 期间页面会短暂失联，属正常现象；STA 模式下请用设备在路由器中获得的新 IP 访问。</div>
+    </div>
+  </div>
+  <div class="dlg-foot"><button id="btnCloseDlg">关闭</button></div>
+</dialog>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ============ prefs (localStorage) ============ */
+const Prefs = {
+  get(k, d) { try { const v = localStorage.getItem('aircom.'+k); return v === null ? d : v; } catch(e) { return d; } },
+  set(k, v) { try { localStorage.setItem('aircom.'+k, v); } catch(e) {} }
+};
+
+/* ============ toast ============ */
+let toastTimer = null;
+function toast(msg, isErr) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.className = '', isErr ? 4000 : 2200);
+}
+
+/* ============ ANSI terminal engine ============ */
+const DEFAULT_FG = '#2ee66a';
+const PAL = ['#000000','#c43434','#26b34a','#d5d51e','#2472c8','#bc3fbc','#11a8cd','#e5e5e5',
+             '#666666','#f14c4c','#2ee66a','#f5f543','#3b8eea','#d670d6','#29d5f6','#ffffff'];
+
+const Term = (() => {
+  const MAXROWS = 3000;
+  const termEl = document.getElementById('term');
+  let cols = 100;
+  let rows = [];          // rows[y] = {c:[chars], s:[styles]}
+  let rowEls = [];
+  let cx = 0, cy = 0, style = 0;
+  const dirty = new Set();
+  let renderQueued = false;
+
+  function measureCols() {
+    const probe = document.createElement('div');
+    probe.className = 'ln';
+    probe.style.visibility = 'hidden';
+    probe.textContent = '0123456789'.repeat(20);
+    termEl.appendChild(probe);
+    const w = probe.getBoundingClientRect().width / 200;
+    probe.remove();
+    const c = Math.floor((termEl.clientWidth - 20) / w);
+    return Math.max(40, Math.min(220, c || 100));
+  }
+
+  function newRow() { return { c: [], s: [] }; }
+  function appendRowEl() {
+    const d = document.createElement('div');
+    d.className = 'ln';
+    termEl.appendChild(d);
+    rowEls.push(d);
+  }
+  function ensureRow(y) {
+    while (rows.length <= y) { rows.push(newRow()); appendRowEl(); }
+  }
+  function pad(row, x) {
+    for (let i = row.c.length; i < x; i++) { row.c[i] = ' '; row.s[i] = 0; }
+  }
+  function markDirty(y) { if (y >= 0 && y < rows.length) dirty.add(y); }
+
+  function put(ch) {
+    ensureRow(cy);
+    const row = rows[cy];
+    pad(row, cx);
+    row.c[cx] = ch; row.s[cx] = style;
+    cx++;
+    markDirty(cy);
+    if (cx >= cols) { cx = 0; cy++; ensureRow(cy); }
+  }
+  function lineFeed() { cy++; ensureRow(cy); }
+  function clearRowRange(y, from, to) {
+    if (y >= rows.length) return;
+    const row = rows[y];
+    pad(row, to);
+    for (let i = from; i < to && i < row.c.length; i++) { row.c[i] = ' '; row.s[i] = 0; }
+    markDirty(y);
+  }
+  function trim() {
+    if (rows.length <= MAXROWS) return;
+    const k = rows.length - MAXROWS;
+    rows.splice(0, k);
+    for (let i = 0; i < k; i++) rowEls[i].remove();
+    rowEls.splice(0, k);
+    cy = Math.max(0, cy - k);
+    const nd = new Set();
+    for (const y of dirty) if (y - k >= 0) nd.add(y - k);
+    dirty.clear();
+    for (const y of nd) dirty.add(y);
+  }
+
+  /* ---- ANSI parser ---- */
+  const GROUND = 0, ESC = 1, CSI = 2, OSC = 3, OSC_ESC = 4;
+  let st = GROUND, params = '';
+
+  function csiParams() {
+    if (params === '') return [];
+    return params.split(';').map(x => parseInt(x, 10) || 0);
+  }
+  function applySgr(list) {
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (p === 0) { style = 0; }
+      else if (p === 1) style |= 0x100;
+      else if (p === 4) style |= 0x200;
+      else if (p === 7) style |= 0x400;
+      else if (p === 22) style &= ~0x100;
+      else if (p === 24) style &= ~0x200;
+      else if (p === 27) style &= ~0x400;
+      else if (p >= 30 && p <= 37) style = (style & ~0xF) | (p - 30);
+      else if (p >= 90 && p <= 97) style = (style & ~0xF) | (p - 90 + 8);
+      else if (p === 39) style &= ~0xF;
+      else if (p >= 40 && p <= 47) style = (style & ~0xF0) | ((p - 40) << 4);
+      else if (p >= 100 && p <= 107) style = (style & ~0xF0) | ((p - 100 + 8) << 4);
+      else if (p === 49) style &= ~0xF0;
+      else if (p === 38 || p === 48) {
+        // 38;5;N / 48;5;N (256-color): approximate onto 16-color palette
+        if (i + 2 < list.length && list[i+1] === 5) {
+          const n = list[i+2] & 0xF;
+          if (p === 38) style = (style & ~0xF) | n;
+          else style = (style & ~0xF0) | (n << 4);
+          i += 2;
+        }
+      }
+    }
+  }
+  function csiDispatch(final) {
+    const ps = csiParams();
+    const n = (ps.length ? ps[0] : 0) || 1;
+    switch (final) {
+      case 'A': cy = Math.max(0, cy - n); break;
+      case 'B': case 'e': cy += n; ensureRow(cy); break;
+      case 'C': cx = Math.min(cols - 1, cx + n); break;
+      case 'D': cx = Math.max(0, cx - n); break;
+      case 'E': cy += n; cx = 0; ensureRow(cy); break;
+      case 'F': cy = Math.max(0, cy - n); cx = 0; break;
+      case 'G': case '`': cx = Math.max(0, Math.min(cols - 1, n - 1)); break;
+      case 'd': cy = Math.max(0, n - 1); ensureRow(cy); break;
+      case 'H': case 'f': {
+        const r = (ps.length ? ps[0] : 1) || 1, c = (ps.length > 1 ? ps[1] : 1) || 1;
+        cy = Math.max(0, r - 1); cx = Math.max(0, c - 1); ensureRow(cy);
+        break;
+      }
+      case 'J': {
+        const m = ps.length ? ps[0] : 0;
+        if (m === 0) {
+          clearRowRange(cy, cx, cols);
+          for (let y = cy + 1; y < rows.length; y++) clearRowRange(y, 0, cols);
+        } else if (m === 1) {
+          for (let y = 0; y < cy; y++) clearRowRange(y, 0, cols);
+          clearRowRange(cy, 0, cx + 1);
+        } else {
+          for (let y = 0; y < rows.length; y++) clearRowRange(y, 0, cols);
+        }
+        break;
+      }
+      case 'K': {
+        const m = ps.length ? ps[0] : 0;
+        if (m === 0) clearRowRange(cy, cx, cols);
+        else if (m === 1) clearRowRange(cy, 0, cx + 1);
+        else clearRowRange(cy, 0, cols);
+        break;
+      }
+      case 'm': applySgr(ps.length ? ps : [0]); break;
+      default: break;  /* unsupported: swallow */
+    }
+  }
+
+  function write(str) {
+    for (const ch of str) {
+      const cp = ch.codePointAt(0);
+      if (st === GROUND) {
+        if (cp === 0x1b) { st = ESC; }
+        else if (cp === 0x0a || cp === 0x0b || cp === 0x0c) { lineFeed(); }
+        else if (cp === 0x0d) { cx = 0; }
+        else if (cp === 0x08) { if (cx > 0) cx--; }
+        else if (cp === 0x09) { do { put(' '); } while (cx % 8 !== 0); }
+        else if (cp < 0x20 || cp === 0x7f) { /* ignore */ }
+        else if (cp < 0x10000 || cp > 0x1FFFF) { put(ch); }
+        else { put('�'); }
+      } else if (st === ESC) {
+        if (ch === '[') { st = CSI; params = ''; }
+        else if (ch === ']') { st = OSC; }
+        else if (ch === '(' || ch === ')' || ch === '=' || ch === '>') { st = GROUND; } // charset etc: swallow 1 byte
+        else { st = GROUND; }  // two-byte escape: done
+      } else if (st === CSI) {
+        if (cp >= 0x30 && cp <= 0x3f) { params += ch; }
+        else if (cp >= 0x40 && cp <= 0x7e) { st = GROUND; csiDispatch(ch); }
+        else { st = GROUND; }  // malformed: abort sequence
+      } else if (st === OSC) {
+        if (cp === 0x07) st = GROUND;
+        else if (cp === 0x1b) st = OSC_ESC;
+      } else if (st === OSC_ESC) {
+        st = GROUND;  // ESC \ terminates OSC; any other byte treated as done
+      }
+    }
+    trim();
+    scheduleRender();
+  }
+
+  /* ---- render ---- */
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function spanStyle(s) {
+    let fg = s & 0xF, bg = (s >> 4) & 0xF;
+    const bold = s & 0x100, ul = s & 0x200, inv = s & 0x400;
+    if (inv) { const t = fg; fg = bg; bg = t; }
+    let css = '';
+    css += 'color:' + (fg ? PAL[fg] : (inv ? PAL[0] : DEFAULT_FG)) + ';';
+    if (bg) css += 'background:' + PAL[bg] + ';';
+    else if (inv) css += 'background:' + DEFAULT_FG + ';';
+    if (bold) css += 'font-weight:700;';
+    if (ul) css += 'text-decoration:underline;';
+    return css;
+  }
+  function render() {
+    renderQueued = false;
+    for (const y of dirty) {
+      if (y >= rowEls.length) continue;
+      const row = rows[y];
+      const el = rowEls[y];
+      let plain = true;
+      for (let i = 0; i < row.s.length; i++) { if (row.s[i] !== 0) { plain = false; break; } }
+      if (plain) {
+        el.textContent = row.c.join('');
+        continue;
+      }
+      let html = '', curS = null, buf = '';
+      for (let i = 0; i < row.c.length; i++) {
+        const s = row.s[i] || 0;
+        if (s !== curS) {
+          if (buf) html += '<span style="' + spanStyle(curS) + '">' + esc(buf) + '</span>';
+          curS = s; buf = '';
+        }
+        buf += row.c[i];
+      }
+      if (buf) html += '<span style="' + spanStyle(curS) + '">' + esc(buf) + '</span>';
+      el.innerHTML = html;
+    }
+    dirty.clear();
+    if (UI.autoscroll) termEl.scrollTop = termEl.scrollHeight;
+  }
+  function scheduleRender() {
+    if (renderQueued || dirty.size === 0) return;
+    renderQueued = true;
+    requestAnimationFrame(render);
+  }
+
+  function clear() {
+    rows = []; style = 0; cx = 0; cy = 0; st = GROUND;
+    for (const el of rowEls) el.remove();
+    rowEls = [];
+    dirty.clear();
+    ensureRow(0);
+    scheduleRender();
+  }
+
+  cols = measureCols();
+  window.addEventListener('resize', () => { cols = measureCols(); });
+  ensureRow(0);
+
+  return { write, clear, get cols() { return cols; } };
+})();
+
+/* ============ UI state / status bar ============ */
+const UI = {
+  autoscroll: Prefs.get('autoscroll', '1') === '1',
+  nl: Prefs.get('nl', 'cr'),
+  bs: Prefs.get('bs', '08'),
+  echo: Prefs.get('echo', '0') === '1',
+  inputMode: Prefs.get('imode', 'line'),   // 'line' | 'char'
+};
+
+const $ = id => document.getElementById(id);
+const termEl = $('term'), kbd = $('kbd');
+
+termEl.addEventListener('scroll', () => {
+  const atBottom = termEl.scrollHeight - termEl.scrollTop - termEl.clientHeight < 40;
+  if (!atBottom && UI.autoscroll) { UI.autoscroll = false; syncScrollBtn(); }
+});
+function syncScrollBtn() {
+  const b = $('btnScroll');
+  b.classList.toggle('on', UI.autoscroll);
+  b.textContent = UI.autoscroll ? '自动滚动' : '滚动已暂停';
+}
+$('btnScroll').onclick = () => {
+  UI.autoscroll = !UI.autoscroll;
+  Prefs.set('autoscroll', UI.autoscroll ? '1' : '0');
+  if (UI.autoscroll) termEl.scrollTop = termEl.scrollHeight;
+  syncScrollBtn();
+};
+$('btnClear').onclick = () => Term.clear();
+$('btnCfg').onclick = () => { loadConfigIntoDlg(); $('cfgDlg').showModal(); kbd.blur(); };
+$('btnCloseDlg').onclick = () => $('cfgDlg').close();
+syncScrollBtn();
+
+/* ---- input mode: 'line' (serial-assistant style) vs 'char' (raw terminal) ---- */
+const lineInput = $('lineInput');
+function syncInputMode() {
+  const line = UI.inputMode === 'line';
+  $('btnInputMode').textContent = line ? '行输入' : '字符输入';
+  $('btnInputMode').classList.toggle('on', !line);
+  $('btnInputMode').title = line
+    ? '行输入：回车后发送整行（点击切换为逐字符终端模式）'
+    : '字符输入：每个按键立即发送（点击切换为行输入模式）';
+  $('lineBar').classList.toggle('show', line);
+  if (line) kbd.blur(); else lineInput.blur();
+  focusInput();
+}
+function focusInput() {
+  if ($('cfgDlg').open) return;
+  (UI.inputMode === 'line' ? lineInput : kbd).focus();
+}
+$('btnInputMode').onclick = () => {
+  UI.inputMode = UI.inputMode === 'line' ? 'char' : 'line';
+  Prefs.set('imode', UI.inputMode);
+  syncInputMode();
+};
+
+/* line input: Enter sends, Up/Down browse history */
+const lineHistory = [];
+let histIdx = -1;
+function sendLine() {
+  const text = lineInput.value;
+  if (!text) { sendText(nlStr()); return; }   // empty line still sends newline
+  if (sendText(text + nlStr())) {
+    if (lineHistory[lineHistory.length - 1] !== text) lineHistory.push(text);
+    if (lineHistory.length > 50) lineHistory.shift();
+  }
+  lineInput.value = '';
+  histIdx = -1;
+}
+$('btnSendLine').onclick = sendLine;
+lineInput.addEventListener('keydown', e => {
+  if (e.isComposing) return;
+  if (e.key === 'Enter') { e.preventDefault(); sendLine(); }
+  else if (e.key === 'ArrowUp' && lineHistory.length) {
+    e.preventDefault();
+    if (histIdx === -1) histIdx = lineHistory.length - 1;
+    else if (histIdx > 0) histIdx--;
+    lineInput.value = lineHistory[histIdx];
+  } else if (e.key === 'ArrowDown' && lineHistory.length) {
+    e.preventDefault();
+    if (histIdx === -1) return;
+    histIdx++;
+    if (histIdx >= lineHistory.length) { histIdx = -1; lineInput.value = ''; }
+    else lineInput.value = lineHistory[histIdx];
+  }
+});
+
+termEl.addEventListener('mousedown', e => {
+  if (window.getSelection().isCollapsed) {
+    setTimeout(focusInput, 0);
+  }
+});
+
+/* ============ WebSocket link ============ */
+let ws = null, wsRetry = 0, wsAlive = false;
+const dec = new TextDecoder('utf-8', { fatal: false });
+const enc = new TextEncoder();
+
+function setWsState(cls, txt) {
+  $('wsDot').className = 'dot ' + cls;
+  $('wsTxt').textContent = txt;
+}
+function wsConnect() {
+  setWsState('wait', '连接中');
+  let sock;
+  try { sock = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); }
+  catch (e) { scheduleReconnect(); return; }
+  ws = sock;
+  sock.binaryType = 'arraybuffer';
+  sock.onopen = () => {
+    if (ws !== sock) return;
+    wsRetry = 0; wsAlive = true;
+    setWsState('on', '已连接');
+    $('frozen').classList.remove('show');
+    sock.send('{"t":"hello"}');
+    focusInput();
+  };
+  sock.onmessage = e => {
+    if (ws !== sock) return;
+    if (e.data instanceof ArrayBuffer) {
+      Term.write(dec.decode(new Uint8Array(e.data), { stream: true }));
+    } else if (typeof e.data === 'string') {
+      try {
+        const m = JSON.parse(e.data);
+        if (m.t === 'hello') { updateUartInfo(m.uart); }
+      } catch (err) {}
+    }
+  };
+  sock.onclose = () => { if (ws === sock) { wsAlive = false; scheduleReconnect(); } };
+  sock.onerror = () => { try { sock.close(); } catch (e) {} };
+}
+function scheduleReconnect() {
+  setWsState('off', '未连接');
+  $('frozen').classList.add('show');
+  const delay = Math.min(8000, 1000 * Math.pow(2, wsRetry)) + Math.random() * 300;
+  wsRetry++;
+  $('frozenRetry').textContent = '（' + Math.round(delay / 1000) + 's 后第 ' + wsRetry + ' 次尝试）';
+  setTimeout(wsConnect, delay);
+}
+
+function sendText(text) {
+  if (ws && ws.readyState === 1) {
+    ws.send(enc.encode(text));
+    if (UI.echo) Term.write(text);
+    return true;
+  }
+  return false;
+}
+
+/* ============ keyboard input ============ */
+function nlStr() { return UI.nl === 'crlf' ? '\r\n' : (UI.nl === 'lf' ? '\n' : '\r'); }
+function bsStr() { return UI.bs === '7f' ? '\x7f' : '\x08'; }
+
+const FKEYS = { F1:'\x1bOP', F2:'\x1bOQ', F3:'\x1bOR', F4:'\x1bOS' };
+
+kbd.addEventListener('keydown', e => {
+  if (UI.inputMode !== 'char' || e.isComposing) return;
+  const k = e.key;
+  if (e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (k === 'c' || k === 'v' || k === 'a' || k === 'x') return;  // let copy/paste work
+    if (k.length === 1) {
+      const c = k.toUpperCase().charCodeAt(0) - 64;
+      if (c >= 0 && c <= 31) { sendText(String.fromCharCode(c)); e.preventDefault(); return; }
+    }
+    if (k === ' ') { sendText('\x00'); e.preventDefault(); return; }
+    return;
+  }
+  if (e.altKey) return;
+  let out = null;
+  switch (k) {
+    case 'Enter':     out = nlStr(); break;
+    case 'Backspace': out = bsStr(); break;
+    case 'Tab':       out = '\t'; break;
+    case 'Escape':    out = '\x1b'; break;
+    case 'ArrowUp':    out = '\x1b[A'; break;
+    case 'ArrowDown':  out = '\x1b[B'; break;
+    case 'ArrowRight': out = '\x1b[C'; break;
+    case 'ArrowLeft':  out = '\x1b[D'; break;
+    case 'Home':  out = '\x1b[H'; break;
+    case 'End':   out = '\x1b[F'; break;
+    case 'Insert':   out = '\x1b[2~'; break;
+    case 'Delete':   out = '\x1b[3~'; break;
+    case 'PageUp':   out = '\x1b[5~'; break;
+    case 'PageDown': out = '\x1b[6~'; break;
+    default:
+      if (FKEYS[k]) out = FKEYS[k];
+      else if (k.length === 1 && !e.ctrlKey && !e.metaKey) out = k;
+  }
+  if (out !== null) { sendText(out); e.preventDefault(); }
+});
+
+/* IME (中文输入法): compositionend carries the committed text */
+let composing = false;
+kbd.addEventListener('compositionstart', () => { composing = true; });
+kbd.addEventListener('compositionend', e => {
+  composing = false;
+  if (e.data) sendText(e.data);
+  kbd.value = '';
+});
+
+/* paste: chunked so no single WS frame gets large (raw terminal mode) */
+document.addEventListener('paste', e => {
+  if (UI.inputMode !== 'char') return;   // line mode: paste into the input box normally
+  const target = document.activeElement;
+  if (target && target !== kbd && target !== document.body) {
+    const dlg = document.querySelector('dialog[open]');
+    if (dlg && dlg.contains(target)) return;   // allow normal paste inside dialog inputs
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+  }
+  const text = (e.clipboardData || window.clipboardData).getData('text');
+  if (!text) return;
+  e.preventDefault();
+  for (let i = 0; i < text.length; i += 512) {
+    sendText(text.slice(i, i + 512));
+  }
+  toast('已粘贴 ' + text.length + ' 字节');
+});
+
+/* ============ status polling ============ */
+function updateUartInfo(u) {
+  if (!u) return;
+  const p = ['无','奇','偶'][u.parity] || '?';
+  $('uartInfo').textContent = u.baud + ' ' + u.data_bits + p[0] + u.stop_bits;
+}
+const FAIL_REASONS = {
+  1: '连接超时', 2: '认证失败', 15: '密码错误(握手超时)', 201: '找不到该网络',
+  202: '密码错误', 203: '连接被拒', 204: '关联失败', 205: '握手超时',
+};
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/status');
+    if (!r.ok) throw 0;
+    const s = await r.json();
+    const ips = [];
+    if (s.wifi.ap_ip) ips.push('AP ' + s.wifi.ap_ip);
+    if (s.wifi.sta_ip) ips.push('STA ' + s.wifi.sta_ip);
+    let ip = ips.join(' · ') || (s.wifi.mode_str || '--');
+    if (s.wifi.sta_started && !s.wifi.sta_connected) {
+      const why = FAIL_REASONS[s.wifi.fail_reason] || ('错误码 ' + s.wifi.fail_reason);
+      ip += '（STA 连接失败: ' + why + '）';
+    }
+    $('ipInfo').textContent = ip;
+    $('ipInfo').title = 'AP 热点: ' + s.wifi.ap_ssid + (s.wifi.ap_clients ? ' (' + s.wifi.ap_clients + ' 台已连接)' : '') +
+      (s.wifi.sta_ssid ? '\nSTA 路由器: ' + s.wifi.sta_ssid : '');
+    updateUartInfo(s.uart);
+    const heapMB = (s.stats.heap_free / 1024).toFixed(0);
+    $('cliInfo').textContent = '👤' + s.stats.ws_clients + ' · ' + heapMB + 'KB';
+    $('cliInfo').title = 'WS客户端 ' + s.stats.ws_clients + ' | 空闲 ' + heapMB + 'KB' +
+      ' | 丢帧 ' + s.stats.ws_drops + ' | 串口溢出 ' + s.stats.uart_ovf;
+  } catch (e) { /* device unreachable; ws banner already showing */ }
+}
+setInterval(pollStatus, 2000);
+
+/* ============ settings dialog ============ */
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+async function loadConfigIntoDlg() {
+  try {
+    const c = await api('/api/config');
+    if (c.uart) {
+      const b = String(c.uart.baud);
+      const sel = $('sBaud');
+      let found = false;
+      for (const o of sel.options) if (o.value === b) { found = true; break; }
+      if (found) { sel.value = b; $('sBaudCustom').style.display = 'none'; }
+      else { sel.value = 'custom'; $('sBaudCustom').style.display = ''; $('sBaudCustom').value = b; }
+      $('sBits').value = c.uart.data_bits;
+      $('sParity').value = c.uart.parity;
+      $('sStop').value = String(c.uart.stop_bits);
+    }
+    if (c.wifi) {
+      $('sMode').value = c.wifi.mode;
+      $('sStaSsid').value = c.wifi.sta_ssid || '';
+      $('sApSsid').value = c.wifi.ap_ssid || '';
+      $('sStaPass').value = c.wifi.sta_pass || '';
+      $('sApPass').value = c.wifi.ap_pass || '';
+    }
+    $('sNL').value = UI.nl; $('sBS').value = UI.bs; $('sEcho').value = UI.echo ? '1' : '0';
+    $('sImode').value = UI.inputMode;
+  } catch (e) { toast('读取配置失败: ' + e.message, true); }
+}
+
+$('sBaud').onchange = () => {
+  $('sBaudCustom').style.display = $('sBaud').value === 'custom' ? '' : 'none';
+};
+
+$('btnApplyUart').onclick = async () => {
+  try {
+    const baud = $('sBaud').value === 'custom' ? parseInt($('sBaudCustom').value, 10) : parseInt($('sBaud').value, 10);
+    if (!baud || baud < 300 || baud > 2000000) throw new Error('波特率需在 300 ~ 2000000 之间');
+    const body = {
+      baud,
+      data_bits: parseInt($('sBits').value, 10),
+      parity: parseInt($('sParity').value, 10),
+      stop_bits: parseFloat($('sStop').value),
+    };
+    const r = await api('/api/uart', body);
+    UI.nl = $('sNL').value; UI.bs = $('sBS').value;
+    UI.echo = $('sEcho').value === '1';
+    Prefs.set('nl', UI.nl); Prefs.set('bs', UI.bs); Prefs.set('echo', UI.echo ? '1' : '0');
+    if (UI.inputMode !== $('sImode').value) {
+      UI.inputMode = $('sImode').value;
+      Prefs.set('imode', UI.inputMode);
+      syncInputMode();
+    }
+    updateUartInfo(r.uart);
+    toast('串口设置已生效并保存');
+  } catch (e) { toast('失败: ' + e.message, true); }
+};
+
+$('btnApplyWifi').onclick = async () => {
+  try {
+    const body = {
+      mode: parseInt($('sMode').value, 10),
+      sta_ssid: $('sStaSsid').value.trim(),
+      sta_pass: $('sStaPass').value,
+      ap_ssid: $('sApSsid').value.trim(),
+      ap_pass: $('sApPass').value,
+    };
+    if (body.mode !== 1 && body.ap_ssid.length === 0) throw new Error('AP 模式需要热点 SSID');
+    await api('/api/wifi', body);
+    toast('WiFi 配置已保存，设备正在切换…');
+    setTimeout(() => $('cfgDlg').close(), 600);
+  } catch (e) { toast('失败: ' + e.message, true); }
+};
+
+$('btnReboot').onclick = async () => {
+  if (!confirm('确定重启设备？')) return;
+  try { await api('/api/reboot', {}); toast('设备正在重启…'); }
+  catch (e) { toast('失败: ' + e.message, true); }
+  setTimeout(() => $('cfgDlg').close(), 400);
+};
+
+/* ---- wifi scan ---- */
+let scanTimer = null;
+$('btnScan').onclick = async () => {
+  try {
+    await api('/api/wifi/scan', {});
+    $('scanList').style.display = '';
+    $('scanList').innerHTML = '<div class="ap" style="color:#7a8f7a">扫描中…（约 2~4 秒，期间热点可能短暂卡顿）</div>';
+    pollScan();
+  } catch (e) { toast('扫描失败: ' + e.message, true); }
+};
+function pollScan() {
+  clearInterval(scanTimer);
+  scanTimer = setInterval(async () => {
+    try {
+      const r = await api('/api/wifi/scan');
+      if (r.state === 'scanning') return;
+      clearInterval(scanTimer);
+      const list = $('scanList');
+      if (!r.aps || !r.aps.length) { list.innerHTML = '<div class="ap" style="color:#7a8f7a">未发现网络</div>'; return; }
+      list.innerHTML = '';
+      for (const ap of r.aps) {
+        const row = document.createElement('div');
+        row.className = 'ap';
+        const ssid = ap.ssid || '(隐藏网络)';
+        row.innerHTML = '<span class="rssi">' + ap.rssi + '</span><span>' +
+          ssid.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span><span class="lock">' +
+          (ap.auth > 0 ? '🔒' : '') + '</span>';
+        row.onclick = () => {
+          $('sStaSsid').value = ap.ssid || '';
+          $('sStaPass').focus();
+        };
+        list.appendChild(row);
+      }
+    } catch (e) { clearInterval(scanTimer); }
+  }, 700);
+}
+
+/* ============ boot ============ */
+wsConnect();
+pollStatus();
+syncInputMode();
+</script>
+</body>
+</html>
