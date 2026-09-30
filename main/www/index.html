@@ -49,11 +49,17 @@ button.danger:hover { border-color: var(--err); }
 #termWrap { flex: 1 1 auto; overflow: hidden; position: relative; }
 #term {
   position: absolute; inset: 0; overflow-y: auto; overflow-x: auto;
-  padding: 6px 10px; cursor: text;
+  padding: 6px 10px; cursor: text; caret-color: transparent;
+  -webkit-user-select: text; user-select: text;
   -webkit-overflow-scrolling: touch;
 }
 #term .ln { min-height: 1.35em; white-space: pre; }
 #term .ln:empty::after { content: " "; }
+#selCopy {
+  display: none; position: fixed; z-index: 120;
+  padding: 4px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.45);
+}
+#selCopy.show { display: block; }
 #lineBar {
   display: none; flex: 0 0 auto; gap: 8px; padding: 6px 10px;
   background: var(--bar); border-top: 1px solid var(--line);
@@ -134,6 +140,8 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
   <span class="spacer"></span>
   <button id="btnScroll" class="on" title="输出时自动滚动到底部">自动滚动</button>
   <button id="btnInputMode" title="切换输入模式">行输入</button>
+  <button id="btnCopy" title="复制选中的输出；未选中时复制全部输出">复制输出</button>
+  <button id="btnSave" title="将当前终端输出另存为文本文件">另存为</button>
   <button id="btnClear" title="清空终端屏幕">清屏</button>
   <button id="btnCfg" title="串口与网络设置">⚙ 设置</button>
 </div>
@@ -142,7 +150,8 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
   <button onclick="location.reload()">重新加载</button>
 </div>
 
-<div id="termWrap"><div id="term"></div></div>
+<div id="termWrap"><div id="term" contenteditable="true" spellcheck="false"></div></div>
+<button id="selCopy" type="button" title="复制选中的串口输出">复制</button>
 
 <div id="lineBar">
   <input id="lineInput" placeholder="输入内容，回车发送…" autocomplete="off" spellcheck="false">
@@ -481,12 +490,20 @@ const Term = (() => {
     ensureRow(0);
     scheduleRender();
   }
+  function getText(eol) {
+    const sep = eol || '\n';
+    let end = rows.length - 1;
+    const plainRows = rows.map(row => row.c.join('').replace(/[ \t]+$/, ''));
+    while (end >= 0 && plainRows[end] === '') end--;
+    if (end < 0) return '';
+    return plainRows.slice(0, end + 1).join(sep);
+  }
 
   cols = measureCols();
   window.addEventListener('resize', () => { cols = measureCols(); });
   ensureRow(0);
 
-  return { write, clear, get cols() { return cols; } };
+  return { write, clear, getText, get cols() { return cols; } };
 })();
 
 /* ============ UI state / status bar ============ */
@@ -501,6 +518,8 @@ const UI = {
 const $ = id => document.getElementById(id);
 const termEl = $('term'), kbd = $('kbd');
 
+termEl.addEventListener('beforeinput', e => e.preventDefault());
+termEl.addEventListener('drop', e => e.preventDefault());
 termEl.addEventListener('scroll', () => {
   const atBottom = termEl.scrollHeight - termEl.scrollTop - termEl.clientHeight < 40;
   if (!atBottom && UI.autoscroll) { UI.autoscroll = false; syncScrollBtn(); }
@@ -515,6 +534,104 @@ $('btnScroll').onclick = () => {
   Prefs.set('autoscroll', UI.autoscroll ? '1' : '0');
   if (UI.autoscroll) termEl.scrollTop = termEl.scrollHeight;
   syncScrollBtn();
+};
+function termSelection() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  if (!termEl.contains(range.commonAncestorContainer)) return null;
+  const text = sel.toString();
+  return text ? { text, range } : null;
+}
+function selectedTermText() {
+  const sel = termSelection();
+  return sel ? sel.text : '';
+}
+async function writeClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (e) {}
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.readOnly = true;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  ta.style.top = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  const ok = document.execCommand('copy');
+  ta.remove();
+  if (!ok) throw new Error('浏览器禁止访问剪贴板');
+}
+const selCopy = $('selCopy');
+let selectionCopyText = '';
+function hideSelectionCopy() {
+  selCopy.classList.remove('show');
+}
+function syncSelectionCopy() {
+  const sel = termSelection();
+  if (!sel) { selectionCopyText = ''; hideSelectionCopy(); return; }
+  selectionCopyText = sel.text;
+  if (UI.autoscroll) { UI.autoscroll = false; syncScrollBtn(); }
+  const rects = sel.range.getClientRects();
+  const r = rects.length ? rects[rects.length - 1] : sel.range.getBoundingClientRect();
+  if (!r || (!r.width && !r.height)) { hideSelectionCopy(); return; }
+  selCopy.classList.add('show');
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - selCopy.offsetWidth - 8);
+  let top = r.top - selCopy.offsetHeight - 8;
+  if (top < 8) top = Math.min(r.bottom + 8, window.innerHeight - selCopy.offsetHeight - 8);
+  selCopy.style.left = Math.max(8, left) + 'px';
+  selCopy.style.top = Math.max(8, top) + 'px';
+}
+document.addEventListener('selectionchange', syncSelectionCopy);
+termEl.addEventListener('scroll', hideSelectionCopy);
+window.addEventListener('resize', hideSelectionCopy);
+selCopy.addEventListener('mousedown', e => e.preventDefault());
+selCopy.onclick = async () => {
+  const text = selectedTermText() || selectionCopyText;
+  if (!text) { hideSelectionCopy(); return; }
+  try {
+    await writeClipboard(text);
+    toast('已复制选中输出');
+  } catch (e) {
+    toast('复制失败: ' + e.message, true);
+  }
+  hideSelectionCopy();
+};
+$('btnCopy').onclick = async () => {
+  const selected = selectedTermText();
+  const text = selected || Term.getText();
+  if (!text) { toast('没有可复制的输出', true); return; }
+  try {
+    await writeClipboard(text);
+    toast(selected ? '已复制选中输出' : '已复制全部输出');
+  } catch (e) {
+    toast('复制失败: ' + e.message, true);
+  }
+};
+function timestampName() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return 'aircom-serial-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' +
+    p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) + '.txt';
+}
+$('btnSave').onclick = () => {
+  const text = Term.getText('\r\n');
+  if (!text) { toast('没有可保存的输出', true); return; }
+  const blob = new Blob(['\ufeff' + text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = timestampName();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  toast('已导出文本文件');
 };
 $('btnClear').onclick = () => Term.clear();
 $('btnCfg').onclick = () => { loadConfigIntoDlg(); $('cfgDlg').showModal(); kbd.blur(); };
@@ -575,10 +692,10 @@ lineInput.addEventListener('keydown', e => {
   }
 });
 
-termEl.addEventListener('mousedown', e => {
-  if (window.getSelection().isCollapsed) {
-    setTimeout(focusInput, 0);
-  }
+termEl.addEventListener('click', () => {
+  setTimeout(() => {
+    if (window.getSelection().isCollapsed) focusInput();
+  }, 0);
 });
 
 /* ============ WebSocket link ============ */
@@ -688,22 +805,45 @@ kbd.addEventListener('compositionend', e => {
   kbd.value = '';
 });
 
-/* paste: chunked so no single WS frame gets large (raw terminal mode) */
-document.addEventListener('paste', e => {
-  if (UI.inputMode !== 'char') return;   // line mode: paste into the input box normally
-  const target = document.activeElement;
-  if (target && target !== kbd && target !== document.body) {
-    const dlg = document.querySelector('dialog[open]');
-    if (dlg && dlg.contains(target)) return;   // allow normal paste inside dialog inputs
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-  }
-  const text = (e.clipboardData || window.clipboardData).getData('text');
-  if (!text) return;
-  e.preventDefault();
+function sendPasteText(text) {
   for (let i = 0; i < text.length; i += 512) {
     sendText(text.slice(i, i + 512));
   }
   toast('已粘贴 ' + text.length + ' 字节');
+}
+function pasteTextToLineInput(text) {
+  const clean = text.replace(/[\r\n]+/g, ' ');
+  const start = lineInput.selectionStart == null ? lineInput.value.length : lineInput.selectionStart;
+  const end = lineInput.selectionEnd == null ? start : lineInput.selectionEnd;
+  lineInput.setRangeText(clean, start, end, 'end');
+  focusInput();
+  toast('已粘贴到输入框');
+}
+function handlePasteText(text) {
+  if (!text) return;
+  if (UI.inputMode === 'line') pasteTextToLineInput(text);
+  else sendPasteText(text);
+}
+
+/* paste: chunked so no single WS frame gets large (raw terminal mode) */
+document.addEventListener('paste', e => {
+  const text = (e.clipboardData || window.clipboardData).getData('text');
+  const target = e.target;
+  if (target && termEl.contains(target)) {
+    e.preventDefault();
+    handlePasteText(text);
+    return;
+  }
+  if (UI.inputMode !== 'char') return;   // line mode: paste into the input box normally
+  const active = document.activeElement;
+  if (active && active !== kbd && active !== document.body) {
+    const dlg = document.querySelector('dialog[open]');
+    if (dlg && dlg.contains(active)) return;   // allow normal paste inside dialog inputs
+    if (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') return;
+  }
+  if (!text) return;
+  e.preventDefault();
+  sendPasteText(text);
 });
 
 /* ============ status polling ============ */
