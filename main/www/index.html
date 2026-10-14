@@ -518,6 +518,11 @@ const UI = {
 const $ = id => document.getElementById(id);
 const termEl = $('term'), kbd = $('kbd');
 
+/* keep keyboard focus on the terminal/line input: bar buttons must not steal it */
+document.querySelectorAll('#bar button, #lineBar button').forEach(b => {
+  b.addEventListener('mousedown', e => e.preventDefault());
+});
+
 termEl.addEventListener('beforeinput', e => e.preventDefault());
 termEl.addEventListener('drop', e => e.preventDefault());
 termEl.addEventListener('scroll', () => {
@@ -535,6 +540,12 @@ $('btnScroll').onclick = () => {
   if (UI.autoscroll) termEl.scrollTop = termEl.scrollHeight;
   syncScrollBtn();
 };
+function jumpToBottom() {
+  UI.autoscroll = true;
+  Prefs.set('autoscroll', '1');
+  termEl.scrollTop = termEl.scrollHeight;
+  syncScrollBtn();
+}
 function termSelection() {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
@@ -749,6 +760,7 @@ function sendText(text) {
   if (ws && ws.readyState === 1) {
     ws.send(enc.encode(text));
     if (UI.echo) Term.write(text);
+    jumpToBottom();
     return true;
   }
   return false;
