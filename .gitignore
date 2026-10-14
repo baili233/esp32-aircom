@@ -12,3 +12,6 @@ sdkconfig
 .DS_Store
 Thumbs.db
 *.swp
+
+# Editor workspace settings
+.vscode/
