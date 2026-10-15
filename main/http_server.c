@@ -356,6 +356,113 @@ static esp_err_t wifi_post_handler(httpd_req_t *req) {
     return send_ok(req);
 }
 
+/* ---------------- quick-send snippets ---------------- */
+
+/* The snippet store is ~4.4 KB and the httpd task only has an 8 KB stack,
+ * so these handlers must never put an app_snippets_t on the stack. They work
+ * on heap allocations only, handing ownership to app_cfg_set_snippets(),
+ * which serializes the commit behind the config lock. */
+static void json_add_snippets(cJSON *parent, const app_snippets_t *s) {
+    cJSON *arr = cJSON_AddArrayToObject(parent, "snippets");
+    for (uint8_t i = 0; i < s->count; i++) {
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "label", s->items[i].label);
+        cJSON_AddStringToObject(o, "text", s->items[i].text);
+        cJSON_AddItemToArray(arr, o);
+    }
+}
+
+static esp_err_t snippets_get_handler(httpd_req_t *req) {
+    app_snippets_t *s = app_cfg_snippets();
+    if (!s) {
+        return send_err(req, "out of memory");
+    }
+
+    cJSON *j = cJSON_CreateObject();
+    json_add_snippets(j, s);
+    return send_json(req, j);
+}
+
+/* Replaces the whole list: the web UI always posts the complete set. */
+static esp_err_t snippets_post_handler(httpd_req_t *req) {
+    cJSON *j = read_body_json(req, 16384);
+    if (!j) {
+        return send_err(req, "invalid json");
+    }
+
+    cJSON *arr = cJSON_GetObjectItem(j, "snippets");
+    if (!cJSON_IsArray(arr)) {
+        cJSON_Delete(j);
+        return send_err(req, "snippets array required");
+    }
+    if (cJSON_GetArraySize(arr) > APP_SNIPPET_MAX) {
+        cJSON_Delete(j);
+        return send_err(req, "too many snippets");
+    }
+
+    app_snippets_t *staging = calloc(1, sizeof(*staging));
+    if (!staging) {
+        cJSON_Delete(j);
+        return send_err(req, "out of memory");
+    }
+
+    char reason[64] = "bad snippet";
+    bool ok = true;
+    cJSON *item;
+    cJSON_ArrayForEach(item, arr) {
+        cJSON *jt = cJSON_IsObject(item) ? cJSON_GetObjectItem(item, "text") : NULL;
+        if (!cJSON_IsString(jt)) {
+            ok = false;
+            snprintf(reason, sizeof(reason), "snippet text required");
+            break;
+        }
+        if (strlen(jt->valuestring) >= APP_SNIPPET_TEXT_MAX) {
+            ok = false;
+            snprintf(reason, sizeof(reason), "snippet text too long");
+            break;
+        }
+        cJSON *jl = cJSON_GetObjectItem(item, "label");
+        if (jl && !cJSON_IsString(jl)) {
+            ok = false;
+            snprintf(reason, sizeof(reason), "snippet label must be text");
+            break;
+        }
+        if (jl && strlen(jl->valuestring) >= APP_SNIPPET_LABEL_MAX) {
+            ok = false;
+            snprintf(reason, sizeof(reason), "snippet label too long");
+            break;
+        }
+
+        app_snippet_t *dst = &staging->items[staging->count];
+        if (jl) {
+            strlcpy(dst->label, jl->valuestring, APP_SNIPPET_LABEL_MAX);
+        }
+        strlcpy(dst->text, jt->valuestring, APP_SNIPPET_TEXT_MAX);
+        staging->count++;
+    }
+    cJSON_Delete(j);
+
+    if (!ok) {
+        free(staging);
+        return send_err(req, reason);
+    }
+
+    /* Persist first; the in-RAM set is only replaced if NVS accepts it. */
+    if (app_cfg_set_snippets(staging) != ESP_OK) {
+        free(staging);
+        return send_err(req, "nvs save failed");
+    }
+    free(staging);
+
+    app_snippets_t *saved = app_cfg_snippets();
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp, "ok", true);
+    if (saved) {
+        json_add_snippets(resp, saved);
+    }
+    return send_json(req, resp);
+}
+
 static esp_err_t scan_post_handler(httpd_req_t *req) {
     wifi_manager_request_scan();
     return send_ok(req);
@@ -506,6 +613,8 @@ static const httpd_uri_t uri_status  = { .uri = "/api/status", .method = HTTP_GE
 static const httpd_uri_t uri_cfg_get = { .uri = "/api/config", .method = HTTP_GET, .handler = config_get_handler };
 static const httpd_uri_t uri_uart    = { .uri = "/api/uart", .method = HTTP_POST, .handler = uart_post_handler };
 static const httpd_uri_t uri_wifi    = { .uri = "/api/wifi", .method = HTTP_POST, .handler = wifi_post_handler };
+static const httpd_uri_t uri_snip_g  = { .uri = "/api/snippets", .method = HTTP_GET, .handler = snippets_get_handler };
+static const httpd_uri_t uri_snip_p  = { .uri = "/api/snippets", .method = HTTP_POST, .handler = snippets_post_handler };
 static const httpd_uri_t uri_scan_g  = { .uri = "/api/wifi/scan", .method = HTTP_GET, .handler = scan_get_handler };
 static const httpd_uri_t uri_scan_p  = { .uri = "/api/wifi/scan", .method = HTTP_POST, .handler = scan_post_handler };
 static const httpd_uri_t uri_reboot  = { .uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler };
@@ -513,7 +622,7 @@ static const httpd_uri_t uri_ws      = { .uri = "/ws", .method = HTTP_GET, .hand
 
 esp_err_t http_server_start(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.stack_size = 8192;
+    config.stack_size = 8192;   /* snippet handlers stay off this stack */
     config.max_open_sockets = 8;
     config.max_uri_handlers = 16;
     config.lru_purge_enable = true;
@@ -533,6 +642,8 @@ esp_err_t http_server_start(void) {
     httpd_register_uri_handler(s_server, &uri_cfg_get);
     httpd_register_uri_handler(s_server, &uri_uart);
     httpd_register_uri_handler(s_server, &uri_wifi);
+    httpd_register_uri_handler(s_server, &uri_snip_g);
+    httpd_register_uri_handler(s_server, &uri_snip_p);
     httpd_register_uri_handler(s_server, &uri_scan_g);
     httpd_register_uri_handler(s_server, &uri_scan_p);
     httpd_register_uri_handler(s_server, &uri_reboot);

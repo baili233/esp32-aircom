@@ -20,6 +20,8 @@
 3. 页面即终端：键盘输入直接进串口，串口输出实时上屏。
 4. ⚙ 设置 里可改波特率/数据位/校验/停止位（立即生效 + NVS 保存）、
    切换 WiFi 模式（AP / STA / AP+STA）、扫描并加入路由器、重启设备。
+5. 「常用」按钮展开右侧抽屉，可保存常用指令/短语（最多 12 条，每条约 100 汉字）；
+   点击条目填入输入框，点 ➤ 直接发送（自动追加回车）。内容保存在设备 NVS 中，掉电不丢失。
 
 ## 构建（ESP-IDF v5.3+，本仓库按 v5.5 验证）
 
@@ -39,6 +41,7 @@ Windows 下在 ESP-IDF CMD 环境中执行即可。
 | `GET /api/status` | WiFi/串口/内存/丢帧等状态 |
 | `GET /api/config` · `POST /api/uart` · `POST /api/wifi` | 配置读写 |
 | `POST/GET /api/wifi/scan` | 非阻塞扫描 |
+| `GET/POST /api/snippets` | 常用内容（快捷发送）读写，POST 整体替换并存入 NVS |
 | `POST /api/reboot` | 重启 |
 | `WS /ws` | 二进制帧 = 串口数据；文本帧 = JSON 控制（`{"t":"hello"}` / `{"t":"ping"}`） |
 

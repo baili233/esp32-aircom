@@ -57,6 +57,23 @@ typedef struct {
     app_uart_cfg_t uart;
 } app_cfg_t;
 
+/* ---- quick-send snippets (stored under their own NVS key) ----
+ * Common commands/phrases the user keeps around and fills into the
+ * terminal input. Lengths are UTF-8 bytes including the NUL. */
+#define APP_SNIPPET_MAX        12
+#define APP_SNIPPET_LABEL_MAX  48    /* UTF-8 bytes incl. NUL */
+#define APP_SNIPPET_TEXT_MAX   320   /* UTF-8 bytes incl. NUL */
+
+typedef struct {
+    char label[APP_SNIPPET_LABEL_MAX];  /* optional short name        */
+    char text[APP_SNIPPET_TEXT_MAX];    /* payload sent to the UART   */
+} app_snippet_t;
+
+typedef struct {
+    uint8_t count;
+    app_snippet_t items[APP_SNIPPET_MAX];
+} app_snippets_t;
+
 /* Fill factory defaults (AP SSID gets a MAC-derived suffix). */
 void app_cfg_defaults(app_cfg_t *cfg);
 
@@ -67,6 +84,14 @@ esp_err_t app_cfg_load(app_cfg_t *cfg);
 void        app_cfg_get(app_cfg_t *out);
 esp_err_t   app_cfg_set_uart(const app_uart_cfg_t *uart);
 esp_err_t   app_cfg_set_wifi(const app_wifi_cfg_t *wifi);
+
+/* Quick-send snippets; empty list by default.
+ *
+ * The store is ~4.4 KB, so it lives in a heap-allocated singleton. Callers
+ * only ever touch it through the returned pointer and must never take a
+ * by-value copy, or they will blow the (8 KB) httpd task stack. */
+app_snippets_t *app_cfg_snippets(void);
+esp_err_t       app_cfg_set_snippets(const app_snippets_t *snips);
 
 #ifdef __cplusplus
 }
